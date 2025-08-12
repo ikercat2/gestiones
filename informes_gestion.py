@@ -28,8 +28,6 @@ meses = {
 
 hoy = pd.Timestamp.now().strftime("%Y-%m-%d")
 
-
-hoy = datetime.now()
 mes_anio_actual = f"{meses[hoy.month]} {hoy.year}"
 
 # --- Ajuste de límite de subida a 1 GB ---
@@ -1009,4 +1007,5 @@ elif pagina == a:
             )
         else:
             st.warning("No se ha cargado el DataFrame `df_filtrado`.")
+
 
