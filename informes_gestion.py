@@ -20,13 +20,17 @@ import sys
 import locale
 import datetime as dt
 
+meses = {
+    1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL",
+    5: "MAYO", 6: "JUNIO", 7: "JULIO", 8: "AGOSTO",
+    9: "SEPTIEMBRE", 10: "OCTUBRE", 11: "NOVIEMBRE", 12: "DICIEMBRE"
+}
 
 hoy = pd.Timestamp.now().strftime("%Y-%m-%d")
 
-# Configuración de idioma
-locale.setlocale(locale.LC_TIME, "es_ES.UTF-8")
 
-mes_anio_actual = datetime.now().strftime("%B %Y").upper()
+hoy = datetime.now()
+mes_anio_actual = f"{meses[hoy.month]} {hoy.year}"
 
 # --- Ajuste de límite de subida a 1 GB ---
 config_path = os.path.expanduser("~/.streamlit/config.toml")
@@ -1005,3 +1009,4 @@ elif pagina == a:
             )
         else:
             st.warning("No se ha cargado el DataFrame `df_filtrado`.")
+
