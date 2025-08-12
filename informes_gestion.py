@@ -26,7 +26,7 @@ meses = {
     9: "SEPTIEMBRE", 10: "OCTUBRE", 11: "NOVIEMBRE", 12: "DICIEMBRE"
 }
 
-hoy = pd.Timestamp.now().strftime("%Y-%m-%d")
+hoy = pd.Timestamp.now()
 
 mes_anio_actual = f"{meses[hoy.month]} {hoy.year}"
 
