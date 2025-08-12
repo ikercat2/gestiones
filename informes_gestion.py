@@ -17,8 +17,16 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 import webbrowser
 import subprocess
 import sys
+import locale
+import datetime as dt
 
 
+hoy = pd.Timestamp.now().strftime("%Y-%m-%d")
+
+# Configuración de idioma
+locale.setlocale(locale.LC_TIME, "es_ES.UTF-8")
+
+mes_anio_actual = datetime.now().strftime("%B %Y").upper()
 
 # --- Ajuste de límite de subida a 1 GB ---
 config_path = os.path.expanduser("~/.streamlit/config.toml")
@@ -26,10 +34,12 @@ os.makedirs(os.path.dirname(config_path), exist_ok=True)
 with open(config_path, "w") as f:
     f.write("[server]\nmaxUploadSize = 1024\n")
 
+a = f"Análisis de Proveedores {mes_anio_actual}"
+
 # Menú lateral para seleccionar página
 pagina = st.sidebar.selectbox(
     "Selecciona la página",
-    ["Configuración y carga", "Análisis de Proveedores JULIO 2025"]
+    ["Configuración y carga", a]
 )
 
 # -------------------------
@@ -86,8 +96,10 @@ if pagina == "Configuración y carga":
 
     @st.cache_data
     def cargar_ml(uploaded_file):
-        return pd.read_excel(
+        return pd.read_csv(
             uploaded_file,
+            encoding= "utf-8-sig",
+            sep = ";",
             usecols=["CEDULA", "NOMBRE", "NIT", "EMPRESA", "NRO_SINIESTRO", "ESTADO",
                     "FECHA_RADICADO", "CARGUE", "FECHA_ACCIDENTE", "FECHA_ACTIVACION",
                     "ASIGNADO", "PRUEBA", "ORIGEN", "ALTO_COSTO", "FECHA_CARGUE",
@@ -115,7 +127,7 @@ if pagina == "Configuración y carga":
         )
         archivo_ml = st.file_uploader(
             "ML (siniestros.xlsx)\n📁 Ruta sugerida: Desde el aplicativo ML",
-            type=["xlsx"]
+            type=["csv"]
         )
 
     # --- Guardar en session_state ---
@@ -161,7 +173,25 @@ if pagina == "Configuración y carga":
         
         furat.rename(columns={"ID Siniestro": "ID_SINIESTRO", "Numero documento empresa": "NIT"}, inplace=True)
         furat1.rename(columns={"ID Siniestro": "ID_SINIESTRO", "Numero documento empresa": "NIT"}, inplace=True)
+        
+        furat["Fecha de Radicación"] = pd.to_datetime(
+        furat["Fecha de Radicación"],
+        errors='coerce',
+        dayfirst=True,
+        format='mixed')
+        
+        furat1["Fecha de Radicación"] = pd.to_datetime(
+        furat1["Fecha de Radicación"],
+        errors='coerce',
+        dayfirst=True,
+        format='mixed')
 
+        dto["FECHA_RADICACION"] = pd.to_datetime(
+            dto["FECHA_RADICACION"],
+            errors='coerce',
+            dayfirst=True,
+            format='mixed'
+        )
 
         # ========================================
         # UNIONES DE TABLAS BASE PARA ANÁLISIS
@@ -244,10 +274,12 @@ if pagina == "Configuración y carga":
         furat.loc[(furat["CALIF"] == "TRIAGE") & (furat["PROVEEDOR1"].isin(["6", "7", "8", "9", "0"])), "PROVEEDOR"] = "BVS_TRIAGE"
         furat.loc[furat["ESTADO"].notna(), "PROVEEDOR"] = "BVS"
         furat["FUENTE"] = "FURAT"
+        
 
         # --------
         # DTO NUEVOS
         # --------
+        
         dto.rename(columns={"ID_EMPRESA": "NIT", "RAZON_SOCIAL": "Razón Social"}, inplace=True)
         dto = dto.merge(convenio[["NIT", "NUEVA ASIGNACIÓN PROVEEDOR DE CALIFICACIÓN ", "FECHA DE INACTIVACION / RETIRO"]], how="left", on="NIT")
         dto = dto.merge(triage[["ID_SINIESTRO", "CALIF"]], how="left", on="ID_SINIESTRO")
@@ -257,8 +289,10 @@ if pagina == "Configuración y carga":
         dto["FECHA DE INACTIVACION / RETIRO"] = dto["FECHA DE INACTIVACION / RETIRO"].replace("\xa0", np.nan)
 
         # Filtro temporal
-        inicio = pd.Timestamp("2025-07-01")
-        fin = pd.Timestamp("2025-07-31")
+        inicio = furat["Fecha de Radicación"].min()
+        fin = furat["Fecha de Radicación"].max()
+
+                
         filtro = (~dto["NOMBRE_COMITE_POS"].str.contains("C. de cargue y trazabilidad|HEREDADAS TRAZA", case=False, na=False) &
                 (dto["FECHA_RADICACION"] >= inicio) & (dto["FECHA_RADICACION"] <= fin))
         df_filtrado = dto[filtro].copy()
@@ -309,6 +343,8 @@ if pagina == "Configuración y carga":
         # --------
         # UNION FINAL
         # --------
+        
+        
         columnas_comunes = furat.columns.intersection(df_nuevos.columns)
         furat = pd.concat([furat, df_nuevos])
 
@@ -329,21 +365,12 @@ if pagina == "Configuración y carga":
         furat.loc[(furat["PROVEEDORTRIAGE"] == "GESTAR_TRIAGE") , "PROVEEDOR"] = "Gestar_TRIAGE"
 
 
-        furat["FECHA_RADICACION"] = pd.to_datetime(
-            furat["FECHA_RADICACION"],
-            errors='coerce',
-            dayfirst=True,
-            format='mixed'
-        )
 
         furat.loc[(furat["Razón Social"].str.contains("SECRETARIA")) , "PROVEEDOR"] = "Gestar"
 
         furat = furat[(furat["Fecha de Muerte"] == "No Aplica") | (furat["Fecha de Muerte"].isna())]
         
-        
-          
-        
-        
+
 
         #899999061 secretaria - enumerar
         id_secretaria = "899999061"
@@ -352,7 +379,20 @@ if pagina == "Configuración y carga":
         furat.loc[~mask_secretaria, "NIT_ENUM"] = furat.loc[~mask_secretaria, "NIT"]
         
         
+
+        furat["fecha_radicacion"] = furat["Fecha de Radicación"].replace("", np.nan).fillna(furat["FECHA_RADICACION"])
         
+        if "fecha_radicacion" in furat.columns:
+            col_temp = furat.pop("fecha_radicacion")
+            furat.insert(24, "fecha_radicacion", col_temp)
+            
+        furat["fecha_radicacion"] = pd.to_datetime(
+            furat["fecha_radicacion"],
+            errors='coerce',
+            dayfirst=True,
+            format='mixed'
+        )
+
 
         df_filtrado = furat.copy()
         st.session_state["df_filtrado"] = df_filtrado
@@ -374,8 +414,8 @@ if pagina == "Configuración y carga":
 # -------------------------
 # Página 2: Análisis de Proveedores
 # -------------------------
-elif pagina == "Análisis de Proveedores JULIO 2025":
-    st.title("📊 Análisis de Proveedores JULIO 2025")
+elif pagina == a:
+    st.title(a)
     if "df_filtrado" not in st.session_state:
         st.warning("⚠ Por favor, primero cargue y procese los archivos en la página 'Configuración y carga'.")
     else:
@@ -387,12 +427,14 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
         furat = st.session_state["furat"]
 
 
-        st.set_page_config(page_title="Análisis de Proveedores JULIO 2025", layout="wide")
+        st.set_page_config(page_title= a, layout="wide")
 
         # Título con estilo personalizado
-        st.markdown("""
+        fecha_min = df_filtrado["fecha_radicacion"].min().strftime("%d %B %Y")
+        fecha_max = df_filtrado["fecha_radicacion"].max().strftime("%d %B %Y")
+        st.markdown(f"""
             <style>
-                .main-title {
+                .main-title {{
                     font-size: 40px;
                     font-weight: 700;
                     text-align: center;
@@ -401,13 +443,29 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
                     color: white;
                     border-radius: 12px;
                     box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+                    margin-bottom: 10px;
+                }}
+                .date-range {{
+                    font-size: 18px;
+                    font-weight: 500;
+                    text-align: center;
+                    color: #1a3d5d;
+                    background-color: #d6e9f9;
+                    border-radius: 8px;
+                    padding: 6px 12px;
+                    display: inline-block;
+                    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
                     margin-bottom: 30px;
-                }
+                }}
+                .date-container {{
+                    text-align: center;
+                }}
             </style>
-            <div class="main-title">Análisis de Proveedores - Julio 2025</div>
+            <div class="main-title">{a}</div>
+            <div class="date-container">
+                <div class="date-range">DATOS desde <b>{fecha_min}</b> HASTA <b>{fecha_max}</b></div>
+            </div>
         """, unsafe_allow_html=True)
-
-
         # -------------------------
         # 🧩 Filtros Interactivos mejorados
         # -------------------------
@@ -438,9 +496,8 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
 
         with st.sidebar.container():
             filtro_solo_triage = st.checkbox("✅ Solo TRIAGE")
-            filtro_sin_estado = st.checkbox("⚠️ Sin estado")
+            filtro_sin_estado = st.checkbox("⚠️ Sin estado belisario")
             filtro_sin_proveedor = st.checkbox("🚫 Sin convenio")
-            filtro_sin_triage = st.checkbox("❌ Sin triage")
 
         # Copiar el DataFrame original
         df_filtrado = furat.copy()
@@ -452,8 +509,7 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
             df_filtrado = df_filtrado[df_filtrado["ESTADO"].isna()]
         if filtro_sin_proveedor:
             df_filtrado = df_filtrado[df_filtrado["NUEVA ASIGNACIÓN PROVEEDOR DE CALIFICACIÓN "].isna()]
-        if filtro_sin_triage:
-            df_filtrado = df_filtrado[df_filtrado["PROVEEDORTRIAGE"].isna()]
+
 
 
         # -------------------------
@@ -494,7 +550,70 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
                 <h2>{total_convenios_bvs}</h2>
             </div>
             """, unsafe_allow_html=True)
+            
+            
+        # -------------------------
+        # 📅 Filtro de fechas
+        # -------------------------
+       
+        # 🎨 Estilo CSS más moderno
+        st.markdown("""
+        <style>
+        .date-filter-box {
+            background-color: white;
+            padding: 15px 20px;
+            border-radius: 12px;
+            margin-top: 15px;
+            border: 1px solid #E5E7EB;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .date-filter-title {
+            font-size: 17px;
+            font-weight: bold;
+            color: #2563EB;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+        }
+        .date-filter-title::before {
+            content: "📆";
+            margin-right: 6px;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
+        with st.container():
+            st.markdown('<div class="date-filter-box">', unsafe_allow_html=True)
+            st.markdown('<div class="date-filter-title">Filtrar por Fecha de Radicación</div>', unsafe_allow_html=True)
+
+            # Obtener fecha mínima y máxima
+            min_fecha = df_filtrado["fecha_radicacion"].min().date()
+            max_fecha = df_filtrado["fecha_radicacion"].max().date()
+
+            # Selector de fechas (permite uno o dos valores)
+            rango_fechas = st.date_input(
+                "",
+                value=(min_fecha, max_fecha),
+                min_value=min_fecha,
+                max_value=max_fecha
+            )
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # 🛠 Manejo de selección única o doble
+        if isinstance(rango_fechas, tuple) and len(rango_fechas) == 2:
+            fecha_inicio, fecha_fin = rango_fechas
+        elif isinstance(rango_fechas, dt.date):
+            fecha_inicio = fecha_fin = rango_fechas
+        else:
+            st.warning("Por favor selecciona al menos una fecha.")
+            st.stop()
+
+        # 📊 Filtrar el DataFrame
+        df_filtrado = df_filtrado[
+            (df_filtrado["fecha_radicacion"] >= pd.to_datetime(fecha_inicio)) &
+            (df_filtrado["fecha_radicacion"] <= pd.to_datetime(fecha_fin))
+        ]
         # -------------------------
         # 📊 Gráficas tipo dash
         # -------------------------
@@ -573,7 +692,6 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
 
             # TABLA DERECHA
             with col2:
-            # Caja estilizada con degradado como encabezado
                 st.markdown("""
                 <div style="
                     background: linear-gradient(135deg, #0b8cce, #0d2f66);
@@ -588,17 +706,46 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
                 </div>
                 """, unsafe_allow_html=True)
 
-                # Espacio adicional entre el recuadro y la tabla
                 st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+                
 
-                # Procesamiento de la tabla
                 df_temp = df_filtrado.copy()
                 df_temp["Semana"] = pd.cut(
-                    df_temp["FECHA_RADICACION"].dt.day,
+                    df_temp["fecha_radicacion"].dt.day,
                     bins=[0, 7, 14, 21, 28, 31],
                     labels=["Semana 1 (1-7)", "Semana 2 (8-14)", "Semana 3 (15-21)", "Semana 4 (22-28)", "Semana 5 (29-31)"],
                     include_lowest=True
                 )
+                
+                dia_min = df_temp["fecha_radicacion"].dt.day.min()
+                dia_max = df_temp["fecha_radicacion"].dt.day.max()
+
+                # Calcular el rango de días
+                num_dias = dia_max - dia_min + 1
+
+                # Definir tamaño de intervalo dinámico
+                if num_dias <= 7:
+                    intervalo = 1   # un bin por día
+                elif num_dias <= 14:
+                    intervalo = 2   # grupos de 2 días
+                elif num_dias <= 21:
+                    intervalo = 3   # grupos de 3 días
+                else:
+                    intervalo = 7   # grupos semanales
+
+                # Crear los bins dinámicos
+                bins = list(range(dia_min, dia_max + intervalo, intervalo))
+                labels = [f"Días {bins[i]}-{bins[i+1]-1}" for i in range(len(bins)-1)]
+
+                # Asignar la columna "Semana" pero dinámica
+                df_temp["Semana"] = pd.cut(
+                    df_temp["fecha_radicacion"].dt.day,
+                    bins=bins,
+                    labels=labels,
+                    include_lowest=True
+                )
+
+                
 
                 tabla_resumen = pd.DataFrame()
                 tabla_resumen["BVS"] = df_temp[((df_temp["PROVEEDOR"] == "BVS") & (df_temp["PROVEEDORTRIAGE"].isna()))].groupby("Semana").size()
@@ -642,8 +789,8 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
 
 
         df_bvs = df_filtrado[df_filtrado["PROVEEDOR"] == "BVS"].copy()
-        df_bvs["Día"] = df_bvs["FECHA_RADICACION"].dt.day
-        df_bvs["DíaSemana"] = df_bvs["FECHA_RADICACION"].dt.dayofweek  # 0 = Lunes, 6 = Domingo
+        df_bvs["Día"] = df_bvs["fecha_radicacion"].dt.day
+        df_bvs["DíaSemana"] = df_bvs["fecha_radicacion"].dt.dayofweek  # 0 = Lunes, 6 = Domingo
 
         # Lunes a Viernes (0 a 4)
         df_laborales = df_bvs[df_bvs["DíaSemana"] <= 4]
@@ -651,30 +798,35 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
         # Sábados y Domingos (5 y 6)
         df_finde = df_bvs[df_bvs["DíaSemana"] >= 5]
 
-        conteo_laborales = df_laborales["Día"].value_counts().reindex(range(1, 32), fill_value=0).sort_index()
-        conteo_finde = df_finde["Día"].value_counts().reindex(range(1, 32), fill_value=0).sort_index()
+        conteo_laborales = df_laborales["Día"].value_counts().sort_index()
+        conteo_finde = df_finde["Día"].value_counts().sort_index()
 
 
         def generar_grafico_radicaciones(dias_conteo, titulo):
-            dias = np.array(list(range(1, 32))).reshape(-1, 1)
-            radicaciones = np.array([dias_conteo[dia] for dia in range(1, 32)])
-            
+            # Filtramos solo días con datos
+            dias_validos = dias_conteo[dias_conteo > 0].index.tolist()
+            radicaciones = dias_conteo[dias_conteo > 0].values
+
+            # Preparamos datos para regresión
+            dias_np = np.array(dias_validos).reshape(-1, 1)
             modelo = LinearRegression()
-            modelo.fit(dias, radicaciones)
-            tendencia = modelo.predict(dias)
+            modelo.fit(dias_np, radicaciones)
+            tendencia = modelo.predict(dias_np)
 
             fig = go.Figure()
 
+            # Barras
             fig.add_trace(go.Bar(
-                x=dias_conteo.index,
-                y=dias_conteo.values,
+                x=dias_validos,
+                y=radicaciones,
                 name='Casos diarios',
                 marker=dict(color='#0b8cce'),
                 hoverinfo='x+y',
             ))
 
+            # Línea de tendencia
             fig.add_trace(go.Scatter(
-                x=list(range(1, 32)),
+                x=dias_validos,
                 y=tendencia,
                 mode='lines',
                 name='Tendencia',
@@ -683,8 +835,8 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
 
             fig.update_layout(
                 title=titulo,
-                xaxis=dict(title='Día del mes', dtick=1, tickmode='linear'),
-                yaxis_title='Número de casos',
+                xaxis=dict(title='Día del mes', dtick=1, tickmode='linear', tickfont=dict(size=16)),
+                yaxis=dict(title='Número de casos', tickfont=dict(size=16)),
                 height=450,
                 template='plotly_white',
                 legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center", yanchor="bottom"),
@@ -692,7 +844,9 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
                 plot_bgcolor="rgba(0,0,0,0)"
             )
 
+
             return fig
+
 
 
         fig_laborales = generar_grafico_radicaciones(conteo_laborales, "📅 Lunes a Viernes")
@@ -755,7 +909,8 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
                         "HEREDADO","EVENTO","COMITE_INTER","NOMBRE_COMITE_POS","FECHA_RADICACION"],
                 "naranja": ["NUEVA ASIGNACIÓN PROVEEDOR DE CALIFICACIÓN ", "FECHA DE INACTIVACION / RETIRO"],
                 "verde": ["CALIF", "ESTADO","FUENTE"],
-                "salmon": ["PROVEEDOR1", "PROVEEDOR2", "PROVEEDORTRIAGE", "PROVEEDOR"]
+                "salmon": ["PROVEEDOR1", "PROVEEDOR2", "PROVEEDORTRIAGE", "PROVEEDOR"],
+                "azul_oscuro": ["fecha_radicacion"]
             }
 
             fill_colors = {
@@ -763,7 +918,8 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
                 "azul": PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid"),
                 "naranja": PatternFill(start_color="FFD580", end_color="FFD580", fill_type="solid"),
                 "verde": PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid"),
-                "salmon": PatternFill(start_color="FFA07A", end_color="FFA07A", fill_type="solid")
+                "salmon": PatternFill(start_color="FFA07A", end_color="FFA07A", fill_type="solid"),
+                "azul_oscuro": PatternFill(start_color="0b8cce", end_color="0b8cce", fill_type="solid")
             }
 
             for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 1):
@@ -793,7 +949,8 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
                         "NOMBRE_PROFESIONAL_POS_TMO", "PROVEEDOR_POS_TMO", "HEREDADO", "EVENTO", "COMITE_INTER", "NOMBRE_COMITE_POS","FECHA_RADICACION"],
                 "naranja": ["NUEVA ASIGNACIÓN PROVEEDOR DE CALIFICACIÓN ", "FECHA DE INACTIVACION / RETIRO"],
                 "verde": ["CALIF", "ESTADO", "FUENTE"],
-                "salmon": ["PROVEEDOR1", "PROVEEDOR2", "PROVEEDORTRIAGE", "PROVEEDOR"]
+                "salmon": ["PROVEEDOR1", "PROVEEDOR2", "PROVEEDORTRIAGE", "PROVEEDOR"],
+                "azul_oscuro": ["fecha_radicacion"]
             }
 
             color_hex = {
@@ -801,7 +958,8 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
                 "azul": "#ADD8E6",
                 "naranja": "#FFD580",
                 "verde": "#90EE90",
-                "salmon": "#FFA07A"
+                "salmon": "#FFA07A",
+                "azul_oscuro": "#0b8cce"
             }
 
             styles = []
@@ -839,11 +997,10 @@ elif pagina == "Análisis de Proveedores JULIO 2025":
 
             # Botón de descarga con todo el dataframe (sin limitar)
             excel_data = convertir_a_excel(df_filtrado)
-
             st.download_button(
                 label="📥 Descargar Excel",
                 data=excel_data,
-                file_name="Formato_casos_B_G.xlsx",
+                file_name= f"Formato_casos {hoy}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
